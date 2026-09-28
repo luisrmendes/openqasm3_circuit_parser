@@ -1,0 +1,17 @@
+[package]
+name = "oq3_circuit"
+description = "Simulator-agnostic circuit extraction from OpenQASM 3 source files"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.79"
+license = "Apache-2.0"
+authors = ["luisrmendes"]
+repository = "https://github.com/luisrmendes/oq3_circuit"
+keywords = ["QASM", "openqasm3", "quantum"]
+categories = ["parser-implementations"]
+
+[lib]
+doctest = false
+
+[dependencies]
+oq3_semantics = "0.7.0"
