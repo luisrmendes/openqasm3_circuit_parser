@@ -15,3 +15,6 @@ doctest = false
 
 [dependencies]
 oq3_semantics = "0.7.0"
+
+[dev-dependencies]
+qsim_statevec_cpu = { git = "https://github.com/luisrmendes/qsim_statevec_cpu.git", branch = "mature_up" }
