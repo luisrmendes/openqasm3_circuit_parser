@@ -93,7 +93,10 @@ pub fn parse_circuit_file(file_path: &Path) -> Result<ParsedCircuit, String> {
                     return Err("Unsupported annotated statement".to_owned());
                 }
             }
+            // Gate definitions are not expanded: calls to a user-defined gate are
+            // emitted by name, and the consumer decides how to map them.
             asg::Stmt::Include(_)
+            | asg::Stmt::GateDefinition(_)
             | asg::Stmt::DeclareClassical(_)
             | asg::Stmt::InputDeclaration(_)
             | asg::Stmt::OutputDeclaration(_)
