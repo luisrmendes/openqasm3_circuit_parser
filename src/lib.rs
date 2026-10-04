@@ -4,12 +4,15 @@
 //! [`oq3_semantics`]) and returns a simulator-agnostic [`ParsedCircuit`]
 //! containing the qubit count and a flat list of [`GateApplication`] values.
 
+use std::fs;
 use std::path::Path;
 
 use oq3_semantics::asg;
+use oq3_semantics::semantic_error::SemanticErrorList;
 use oq3_semantics::symbols::{SymbolIdResult, SymbolTable, SymbolType};
 use oq3_semantics::syntax_to_semantics;
 use oq3_semantics::types::Type;
+use oq3_source_file::{ErrorTrait, SourceFile, SourceTrait};
 
 /// A gate applied to a specific set of qubit indices.
 #[derive(Debug, Clone)]
@@ -31,14 +34,22 @@ pub struct ParsedCircuit {
 
 /// Parse an OpenQASM 3 source file and extract its circuit representation.
 ///
-/// Returns an error string if the file contains parse/semantic errors, uses
-/// unsupported features (parameterized gates, gate modifiers, multi-dimensional
-/// qubit arrays), or references qubits outside the declared range.
+/// Returns an error string if the file cannot be read, contains parse/semantic
+/// errors (one `path:line:col: message` line per error, including errors in
+/// included files), uses unsupported features (parameterized gates, gate
+/// modifiers, multi-dimensional qubit arrays), or references qubits outside
+/// the declared range.
 pub fn parse_circuit_file(file_path: &Path) -> Result<ParsedCircuit, String> {
+    // `oq3_semantics` panics on unreadable files, so check up front.
+    fs::read_to_string(file_path)
+        .map_err(|e| format!("Unable to read {}: {e}", file_path.display()))?;
+
     let parse_result = syntax_to_semantics::parse_source_file(file_path, None::<&[&str]>);
     if parse_result.any_errors() {
-        parse_result.print_errors();
-        return Err("OpenQASM parsing/semantic validation failed".to_owned());
+        let mut errors = Vec::new();
+        collect_syntax_errors(parse_result.syntax_result(), &mut errors);
+        collect_semantic_errors(parse_result.take_context().errors(), &mut errors);
+        return Err(errors.join("\n"));
     }
 
     let program = parse_result.program();
@@ -108,6 +119,52 @@ pub fn parse_circuit_file(file_path: &Path) -> Result<ParsedCircuit, String> {
     }
 
     Ok(ParsedCircuit { num_qubits, gates })
+}
+
+fn collect_syntax_errors(source_file: &SourceFile, out: &mut Vec<String>) {
+    format_errors(source_file.syntax_ast().errors(), source_file.file_path(), out);
+    for included in source_file.included() {
+        collect_syntax_errors(included, out);
+    }
+}
+
+fn collect_semantic_errors(errors: &SemanticErrorList, out: &mut Vec<String>) {
+    format_errors(errors, errors.source_file_path(), out);
+    for included in errors.include_errors() {
+        collect_semantic_errors(included, out);
+    }
+}
+
+fn format_errors<E: ErrorTrait>(errors: &[E], file_path: &Path, out: &mut Vec<String>) {
+    if errors.is_empty() {
+        return;
+    }
+    let source = fs::read_to_string(file_path).ok();
+    for err in errors {
+        let range = err.range();
+        let (start, end) = (usize::from(range.start()), usize::from(range.end()));
+        let mut message = match &source {
+            Some(src) => {
+                let (line, col) = line_col(src, start);
+                format!("{}:{line}:{col}: {}", file_path.display(), err.message())
+            }
+            None => format!("{}@{start}: {}", file_path.display(), err.message()),
+        };
+        if let Some(snippet) = source.as_deref().and_then(|src| src.get(start..end)) {
+            if !snippet.trim().is_empty() {
+                message.push_str(&format!(" (near `{}`)", snippet.trim()));
+            }
+        }
+        out.push(message);
+    }
+}
+
+/// 1-based line and column of a byte offset in `source`.
+fn line_col(source: &str, offset: usize) -> (usize, usize) {
+    let prefix = &source[..offset.min(source.len())];
+    let line = prefix.matches('\n').count() + 1;
+    let col = prefix.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+    (line, col)
 }
 
 fn extract_gate_application(
