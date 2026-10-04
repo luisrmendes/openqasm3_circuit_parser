@@ -4,6 +4,8 @@
 //! [`oq3_semantics`]) and returns a simulator-agnostic [`ParsedCircuit`]
 //! containing the qubit count and a flat list of [`GateApplication`] values.
 
+use std::path::Path;
+
 use oq3_semantics::asg;
 use oq3_semantics::symbols::{SymbolIdResult, SymbolTable, SymbolType};
 use oq3_semantics::syntax_to_semantics;
@@ -32,7 +34,7 @@ pub struct ParsedCircuit {
 /// Returns an error string if the file contains parse/semantic errors, uses
 /// unsupported features (parameterized gates, gate modifiers, multi-dimensional
 /// qubit arrays), or references qubits outside the declared range.
-pub fn parse_circuit_file(file_path: &str) -> Result<ParsedCircuit, String> {
+pub fn parse_circuit_file(file_path: &Path) -> Result<ParsedCircuit, String> {
     let parse_result = syntax_to_semantics::parse_source_file(file_path, None::<&[&str]>);
     if parse_result.any_errors() {
         parse_result.print_errors();
