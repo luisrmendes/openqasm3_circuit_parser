@@ -2,7 +2,7 @@
 //!
 //! This crate runs the full parse and semantic-analysis pipeline (via
 //! [`oq3_semantics`]) and returns a simulator-agnostic [`ParsedCircuit`]
-//! containing the qubit count and a flat list of [`GateApplication`] values.
+//! containing the qubit count and a flat list of [`Gate`] values.
 
 use std::fs;
 use std::path::Path;
@@ -16,7 +16,7 @@ use oq3_source_file::{ErrorTrait, SourceFile, SourceTrait};
 
 /// A gate applied to a specific set of qubit indices.
 #[derive(Debug, Clone)]
-pub struct GateApplication {
+pub struct Gate {
     /// Gate name as it appears in the source (e.g. `"h"`, `"cx"`, `"ccx"`).
     pub name: String,
     /// Qubit indices (0-based) the gate is applied to, in argument order.
@@ -29,7 +29,7 @@ pub struct ParsedCircuit {
     /// Total number of qubits declared (or inferred from usage if no declaration is present).
     pub num_qubits: u32,
     /// Ordered list of gate applications.
-    pub gates: Vec<GateApplication>,
+    pub gates: Vec<Gate>,
 }
 
 /// Parse an OpenQASM 3 source file and extract its circuit representation.
@@ -55,7 +55,7 @@ pub fn parse_circuit_file(file_path: &Path) -> Result<ParsedCircuit, String> {
     let program = parse_result.program();
     let symbols = parse_result.symbol_table();
 
-    let mut gates: Vec<GateApplication> = Vec::new();
+    let mut gates: Vec<Gate> = Vec::new();
     let mut declared_qubits: Option<u32> = None;
 
     for stmt in program.stmts() {
@@ -173,7 +173,7 @@ fn line_col(source: &str, offset: usize) -> (usize, usize) {
 fn extract_gate_application(
     gate_call: &asg::GateCall,
     symbols: &SymbolTable,
-) -> Result<GateApplication, String> {
+) -> Result<Gate, String> {
     if !gate_call.modifiers().is_empty() {
         return Err("Gate modifiers are not supported yet".to_owned());
     }
@@ -186,7 +186,7 @@ fn extract_gate_application(
         .iter()
         .map(|expr| qubit_index_from_expr(expr, symbols))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(GateApplication { name, qubits })
+    Ok(Gate { name, qubits })
 }
 
 fn ensure_single_quantum_register(current: &mut Option<u32>, new_size: u32) -> Result<(), String> {

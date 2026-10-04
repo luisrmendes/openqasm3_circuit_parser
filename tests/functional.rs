@@ -2,11 +2,11 @@
 
 use std::path::Path;
 
-use oq3_circuit::{parse_circuit_file, GateApplication};
+use oq3_circuit::{parse_circuit_file, Gate};
 use qsim_statevec_cpu::{QInstruct, QubitLayer, SingleCtrlQubitOp, SingleQubitOp, TwoCtrlQubitOp};
 
 // Map instructions gathered from file to qsim_statevec_cpu's `QInstruct` representation.
-fn to_instruction(gate: &GateApplication) -> QInstruct {
+fn to_instruction(gate: &Gate) -> QInstruct {
     match (gate.name.as_str(), gate.qubits.as_slice()) {
         ("x", &[t]) => (SingleQubitOp::PauliX, t).into(),
         ("y", &[t]) => (SingleQubitOp::PauliY, t).into(),
