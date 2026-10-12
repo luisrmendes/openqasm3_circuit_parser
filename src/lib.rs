@@ -1,4 +1,4 @@
-//! High-level circuit extraction from an OpenQASM 3 source file.
+//! High-level circuit extraction from OpenQASM 3 source text.
 //!
 //! This crate runs the full parse and semantic-analysis pipeline (via
 //! [`oq3_semantics`]) and returns a simulator-agnostic [`ParsedCircuit`]
@@ -23,7 +23,7 @@ pub struct Gate {
     pub qubits: Vec<u32>,
 }
 
-/// The result of parsing and extracting a circuit from an OpenQASM 3 file.
+/// The result of parsing and extracting a circuit from OpenQASM 3 source.
 #[derive(Debug)]
 pub struct ParsedCircuit {
     /// Total number of qubits declared (or inferred from usage if no declaration is present).
@@ -32,23 +32,40 @@ pub struct ParsedCircuit {
     pub gates: Vec<Gate>,
 }
 
-/// Parse an OpenQASM 3 source file and extract its circuit representation.
+/// Label used in place of a file path when reporting errors in the top-level source.
+const SOURCE_LABEL: &str = "<input>";
+
+/// Parse OpenQASM 3 source text and extract its circuit representation.
 ///
-/// Returns an error string if the file cannot be read, contains parse/semantic
-/// errors (one `path:line:col: message` line per error, including errors in
-/// included files), uses unsupported features (parameterized gates, gate
+/// The source is parsed in memory. `include "stdgates.inc"` is built in; any
+/// other `include` is resolved from the filesystem by `oq3_semantics`.
+///
+/// Returns an error string if the source contains parse/semantic errors (one
+/// `path:line:col: message` line per error, with `<input>` as the path for the
+/// top-level source), uses unsupported features (parameterized gates, gate
 /// modifiers, multi-dimensional qubit arrays), or references qubits outside
 /// the declared range.
-pub fn parse_circuit_file(file_path: &Path) -> Result<ParsedCircuit, String> {
-    // `oq3_semantics` panics on unreadable files, so check up front.
-    fs::read_to_string(file_path)
-        .map_err(|e| format!("Unable to read {}: {e}", file_path.display()))?;
-
-    let parse_result = syntax_to_semantics::parse_source_file(file_path, None::<&[&str]>);
+pub fn parse_circuit(source: &str) -> Result<ParsedCircuit, String> {
+    let parse_result =
+        syntax_to_semantics::parse_source_string(source, Some(SOURCE_LABEL), None::<&[&str]>);
     if parse_result.any_errors() {
         let mut errors = Vec::new();
-        collect_syntax_errors(parse_result.syntax_result(), &mut errors);
-        collect_semantic_errors(parse_result.take_context().errors(), &mut errors);
+        let syntax = parse_result.syntax_result();
+        format_errors(
+            syntax.syntax_ast().errors(),
+            Path::new(SOURCE_LABEL),
+            Some(source),
+            &mut errors,
+        );
+        for included in syntax.included() {
+            collect_syntax_errors(included, &mut errors);
+        }
+        let context = parse_result.take_context();
+        let semantic = context.errors();
+        format_errors(semantic, Path::new(SOURCE_LABEL), Some(source), &mut errors);
+        for included in semantic.include_errors() {
+            collect_semantic_errors(included, &mut errors);
+        }
         return Err(errors.join("\n"));
     }
 
@@ -78,7 +95,7 @@ pub fn parse_circuit_file(file_path: &Path) -> Result<ParsedCircuit, String> {
                     }
                     _ => {
                         return Err(
-                            "Unexpected non-quantum declaration in quantum declaration".to_owned(),
+                            "Unexpected non-quantum declaration in quantum declaration".to_owned()
                         )
                     }
                 }
@@ -124,36 +141,47 @@ pub fn parse_circuit_file(file_path: &Path) -> Result<ParsedCircuit, String> {
     Ok(ParsedCircuit { num_qubits, gates })
 }
 
+/// Errors from an included file, whose source is read back from disk for line/column info.
 fn collect_syntax_errors(source_file: &SourceFile, out: &mut Vec<String>) {
-    format_errors(source_file.syntax_ast().errors(), source_file.file_path(), out);
+    let file_path = source_file.file_path();
+    let source = fs::read_to_string(file_path).ok();
+    format_errors(
+        source_file.syntax_ast().errors(),
+        file_path,
+        source.as_deref(),
+        out,
+    );
     for included in source_file.included() {
         collect_syntax_errors(included, out);
     }
 }
 
 fn collect_semantic_errors(errors: &SemanticErrorList, out: &mut Vec<String>) {
-    format_errors(errors, errors.source_file_path(), out);
+    let file_path = errors.source_file_path();
+    let source = fs::read_to_string(file_path).ok();
+    format_errors(errors, file_path, source.as_deref(), out);
     for included in errors.include_errors() {
         collect_semantic_errors(included, out);
     }
 }
 
-fn format_errors<E: ErrorTrait>(errors: &[E], file_path: &Path, out: &mut Vec<String>) {
-    if errors.is_empty() {
-        return;
-    }
-    let source = fs::read_to_string(file_path).ok();
+fn format_errors<E: ErrorTrait>(
+    errors: &[E],
+    file_path: &Path,
+    source: Option<&str>,
+    out: &mut Vec<String>,
+) {
     for err in errors {
         let range = err.range();
         let (start, end) = (usize::from(range.start()), usize::from(range.end()));
-        let mut message = match &source {
+        let mut message = match source {
             Some(src) => {
                 let (line, col) = line_col(src, start);
                 format!("{}:{line}:{col}: {}", file_path.display(), err.message())
             }
             None => format!("{}@{start}: {}", file_path.display(), err.message()),
         };
-        if let Some(snippet) = source.as_deref().and_then(|src| src.get(start..end)) {
+        if let Some(snippet) = source.and_then(|src| src.get(start..end)) {
             if !snippet.trim().is_empty() {
                 message.push_str(&format!(" (near `{}`)", snippet.trim()));
             }
@@ -208,7 +236,10 @@ fn symbol_id_from_result(
         .map_err(|_| "Failed to resolve OpenQASM symbol".to_owned())
 }
 
-fn symbol_name_from_result(symbol: &SymbolIdResult, symbols: &SymbolTable) -> Result<String, String> {
+fn symbol_name_from_result(
+    symbol: &SymbolIdResult,
+    symbols: &SymbolTable,
+) -> Result<String, String> {
     let symbol_id = symbol_id_from_result(symbol)?;
     Ok(symbols[&symbol_id].name().to_owned())
 }
